@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lunar Lander</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050505;
+            color: #ffffff;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+            user-select: none; 
+        }
+        h1 {
+            margin: 5px 0;
+            font-size: 24px;
+            text-shadow: 0 0 10px #00ff00;
+        }
+        #controls {
+            margin-bottom: 10px;
+            z-index: 10;
+        }
+        button {
+            background-color: #222;
+            color: #00ff00;
+            border: 2px solid #00ff00;
+            padding: 5px 15px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            cursor: pointer;
+            margin: 0 5px;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #00ff00;
+            color: #000;
+        }
+        
+        #gameContainer {
+            position: relative;
+        }
+
+        canvas {
+            border: 4px solid #333;
+            background-color: #000;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.2);
+            cursor: crosshair;
+            outline: none;
+        }
+
+        #startMenu {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+        }
+        #startMenu h2 {
+            color: #00ff00;
+            margin-bottom: 20px;
+        }
+        .menu-row { margin: 10px 0; }
+        #platMenu { display: none; margin-top: 15px; border-top: 1px solid #333; padding-top: 15px; }
+        
+        #instructions {
+            margin-top: 10px;
+            font-size: 13px;
+            color: #aaa;
+            text-align: center;
+            line-height: 1.4;
+        }
+        .highlight { color: #00ff00; font-weight: bold; }
+        .p1-color { color: #33aaff; }
+        .p2-color { color: #ff33aa; }
+    </style>
+</head>
+<body>
+
+    <h1>LUNAR LANDER</h1>
+    
+    <div id="controls">
+        <button id="btnSurface">Moon Surface</button>
+        <button id="btnCanyon">Moon Canyon</button>
+        <button id="btnTunnel">Underground Tunnel</button>
+        <button id="btnHome">Home</button>
+    </div>
+
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="500" tabindex="0"></canvas>
+        
+        <div id="startMenu">
+            <h2>SELECT GAME MODE</h2>
+            <div class="menu-row">
+                <button onclick="setGameMode('1p')">1 PLAYER</button>
+                <button onclick="document.getElementById('platMenu').style.display='block'">2 PLAYERS</button>
+            </div>
+            <div id="platMenu" class="menu-row">
+                <p style="text-align:center; font-size: 12px; margin-top:0;">(RACE MODE)</p>
+                <button onclick="setGameMode('2p1p')">1 PLATFORM</button>
+                <button onclick="setGameMode('2p2p')">2 PLATFORMS</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="instructions">
+        <strong>1 Player:</strong> [A/S/D] or [Arrows] to fly.<br>
+        <strong>2 Players:</strong> <span class="p1-color">Player 1 (Blue)</span> uses [A/S/D]. <span class="p2-color">Player 2 (Pink)</span> uses [Arrows]. Race to land!<br>
+        Press <span class="highlight">[SPACEBAR]</span> to Restart. (Both legs must hit the platform!)
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        const GRAVITY = 0.04; 
+        const THRUST_Y = 0.12; 
+        const THRUST_X = 0.06; 
+        const SAFE_LANDING_SPEED_Y = 1.0;
+        const SAFE_LANDING_SPEED_X = 0.5;
+
+        let envType = "surface"; 
+        let gameMode = null; 
+        let landers = [];
+        let platforms = [];
+        let terrainPoints = [];
+        let ceilingPoints = [];
+        let globalGameState = "menu"; 
+        let winnerText = "";
+        
+        let startingFuel = 1000;
+
+        window.setGameMode = function(mode) {
+            gameMode = mode;
+            document.getElementById("startMenu").style.display = "none";
+            startingFuel = 1000;
+            resetGame();
+            canvas.focus();
+        };
+
+        function handleUI(action) {
+            if (globalGameState === "menu") return;
+            try {
+                if (document.activeElement && typeof document.activeElement.blur === 'function') {
+                    document.activeElement.blur();
+                }
+
+                if (action === 'surface' || action === 'canyon' || action === 'tunnel') {
+                    envType = action;
+                }
+                
+                startingFuel = 1000; 
+                resetGame();
+                canvas.focus();
+            } catch (err) {
+                console.error("UI Switch Error:", err);
+            }
+        }
+
+        document.getElementById("btnSurface").onclick = function(e) { e.preventDefault(); handleUI('surface'); };
+        document.getElementById("btnCanyon").onclick = function(e) { e.preventDefault(); handleUI('canyon'); };
+        document.getElementById("btnTunnel").onclick = function(e) { e.preventDefault(); handleUI('tunnel'); };
+        document.getElementById("btnHome").onclick = function(e) { e.preventDefault(); location.reload(); };
+
+        function restartGame() {
+            if (globalGameState === "win") {
+                startingFuel = Math.max(0, startingFuel - 200);
+            } else {
+                startingFuel = 1000;
+            }
+            resetGame();
+            canvas.focus();
+        }
+
+        const activeKeys = {};
+        window.addEventListener("keydown", (e) => {
+            let key = e.key ? e.key.toLowerCase() : "";
+            activeKeys[key] = true;
+            
+            if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) {
+                e.preventDefault(); 
+            }
+            if (key === " " && (globalGameState === "win" || globalGameState === "all_crashed")) {
+                restartGame();
+            }
+        }, { passive: false });
+
+        window.addEventListener("keyup", (e) => {
+            let key = e.key ? e.key.toLowerCase() : "";
+            activeKeys[key] = false;
+        });
+
+        canvas.addEventListener("mousedown", () => {
+            if (globalGameState !== "menu") canvas.focus();
+        });
+
+        class Lander {
+            constructor(id, name, color, x, y, controls) {
+                this.id = id;
+                this.name = name;
+                this.color = color;
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.width = 30;
+                this.height = 20;
+                this.fuel = Math.max(200, startingFuel); 
+                this.state = "playing"; 
+                this.controls = controls; 
+                
+                this.thrustingUp = false;
+                this.thrustingLeft = false;
+                this.thrustingRight = false;
+            }
+
+            update() {
+                if (this.state === "landed") return;
+                
+                if (this.state === "crashed" && this.vy === 0 && this.vx === 0) return;
+
+                this.vy += GRAVITY;
+                this.thrustingUp = false;
+                this.thrustingLeft = false;
+                this.thrustingRight = false;
+
+                if (this.state === "playing" && this.fuel > 0) {
+                    if (this.controls.up.some(key => activeKeys[key])) { 
+                        this.vy -= THRUST_Y;
+                        this.fuel -= 2;
+                        this.thrustingUp = true;
+                    }
+                    if (this.controls.left.some(key => activeKeys[key])) { 
+                        this.vx -= THRUST_X;
+                        this.fuel -= 1;
+                        this.thrustingLeft = true;
+                    }
+                    if (this.controls.right.some(key => activeKeys[key])) { 
+                        this.vx += THRUST_X;
+                        this.fuel -= 1;
+                        this.thrustingRight = true;
+                    }
+                }
+
+                this.x += this.vx;
+                this.y += this.vy;
+
+                if (this.x < 0) this.x = canvas.width;
+                if (this.x > canvas.width) this.x = 0;
+
+                this.checkCollisions();
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                if (this.state === "crashed") {
+                    ctx.fillStyle = "#555555";
+                    ctx.strokeStyle = "#333333";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(-18, 18); ctx.lineTo(-24, 4); ctx.lineTo(-10, 12);
+                    ctx.lineTo(-2, -5); ctx.lineTo(12, 14); ctx.lineTo(22, 6);
+                    ctx.lineTo(16, 18); ctx.closePath();
+                    ctx.fill(); ctx.stroke();
+
+                    ctx.strokeStyle = "#888888";
+                    ctx.beginPath();
+                    ctx.moveTo(-12, 6); ctx.lineTo(-28, 16);
+                    ctx.moveTo(10, 8); ctx.lineTo(26, -4);
+                    ctx.moveTo(-2, 10); ctx.lineTo(-12, -14);
+                    ctx.stroke();
+
+                    ctx.fillStyle = "#ff3300";
+                    ctx.beginPath();
+                    ctx.arc(-4 + Math.random() * 8, 12 + Math.random() * 4, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#ffcc00";
+                    ctx.beginPath();
+                    ctx.arc(Math.random() * 6, 8 + Math.random() * 6, 3, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.restore();
+                    return;
+                }
+
+                ctx.fillStyle = "#ff5500";
+                if (this.thrustingUp && this.fuel > 0) {
+                    ctx.beginPath();
+                    ctx.moveTo(-5, this.height / 2);
+                    ctx.lineTo(0, this.height / 2 + 15 + Math.random() * 10);
+                    ctx.lineTo(5, this.height / 2);
+                    ctx.closePath(); ctx.fill();
+                }
+                if (this.thrustingLeft && this.fuel > 0) {
+                    ctx.beginPath();
+                    ctx.moveTo(this.width / 2, -5);
+                    ctx.lineTo(this.width / 2 + 10 + Math.random() * 5, 0);
+                    ctx.lineTo(this.width / 2, 5);
+                    ctx.closePath(); ctx.fill();
+                }
+                if (this.thrustingRight && this.fuel > 0) {
+                    ctx.beginPath();
+                    ctx.moveTo(-this.width / 2, -5);
+                    ctx.lineTo(-this.width / 2 - 10 - Math.random() * 5, 0);
+                    ctx.lineTo(-this.width / 2, 5);
+                    ctx.closePath(); ctx.fill();
+                }
+
+                ctx.strokeStyle = "#cccccc"; ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(-10, this.height / 2); ctx.lineTo(-18, this.height / 2 + 12);
+                ctx.moveTo(-22, this.height / 2 + 12); ctx.lineTo(-14, this.height / 2 + 12); 
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(10, this.height / 2); ctx.lineTo(18, this.height / 2 + 12);
+                ctx.moveTo(14, this.height / 2 + 12); ctx.lineTo(22, this.height / 2 + 12); 
+                ctx.stroke();
+
+                ctx.fillStyle = "#888888";
+                ctx.beginPath();
+                ctx.rect(-this.width / 2, -this.height / 2, this.width, this.height);
+                ctx.fill(); ctx.stroke();
+
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(0, -this.height / 2, 10, Math.PI, 0);
+                ctx.fill(); ctx.stroke();
+
+                ctx.restore();
+            }
+
+            checkCollisions() {
+                const topY = this.y - this.height / 2;
+                const bottomY = this.y + this.height / 2 + 12; 
+                const leftX = this.x - 18;
+                const rightX = this.x + 18;
+                const centerX = this.x;
+                let checkPoints = [leftX, centerX, rightX];
+
+                for (let plat of platforms) {
+                    if (rightX >= plat.x && leftX <= plat.x + plat.width) {
+                        if (bottomY >= plat.y && this.vy >= 0 && this.y < plat.y) {
+                            if (leftX >= plat.x && rightX <= plat.x + plat.width) {
+                                if (Math.abs(this.vx) <= SAFE_LANDING_SPEED_X && this.vy <= SAFE_LANDING_SPEED_Y) {
+                                    this.y = plat.y - (this.height / 2 + 12);
+                                    this.vx = 0;
+                                    this.vy = 0;
+                                    this.state = "landed";
+                                } else {
+                                    this.state = "crashed";
+                                    this.vy = 0;
+                                    this.vx = 0;
+                                    this.y = plat.y - (this.height / 2 + 10);
+                                }
+                            } else {
+                                this.state = "crashed";
+                                this.vy = 0;
+                                this.vx = 0;
+                                this.y = plat.y - (this.height / 2 + 10);
+                            }
+                            return;
+                        }
+                    }
+                }
+
+                for (let other of landers) {
+                    if (other.id !== this.id && other.state === "playing" && this.state === "playing") {
+                        if (Math.abs(this.x - other.x) < 25 && Math.abs(this.y - other.y) < 25) {
+                            this.state = "crashed";
+                            other.state = "crashed";
+                            return;
+                        }
+                    }
+                }
+
+                for (let i = 0; i < terrainPoints.length - 1; i++) {
+                    let p1 = terrainPoints[i];
+                    let p2 = terrainPoints[i + 1];
+
+                    for (let cx of checkPoints) {
+                        if (cx >= p1.x && cx <= p2.x) {
+                            let t = (cx - p1.x) / (p2.x - p1.x);
+                            let terrainY = p1.y + t * (p2.y - p1.y);
+
+                            if (bottomY >= terrainY || topY >= terrainY) {
+                                this.state = "crashed";
+                                this.vy = 0;
+                                this.vx = 0;
+                                this.y = terrainY - (this.height / 2 + 10);
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                if (envType === "tunnel") {
+                    for (let i = 0; i < ceilingPoints.length - 1; i++) {
+                        let p1 = ceilingPoints[i];
+                        let p2 = ceilingPoints[i + 1];
+
+                        for (let cx of checkPoints) {
+                            if (cx >= p1.x && cx <= p2.x) {
+                                let t = (cx - p1.x) / (p2.x - p1.x);
+                                let ceilingY = p1.y + t * (p2.y - p1.y);
+
+                                if (topY <= ceilingY || bottomY <= ceilingY) {
+                                    this.state = "crashed";
+                                    this.vy = 0;
+                                    this.vx = 0;
+                                    this.y = ceilingY + (this.height / 2 + 10);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function generateTerrain() {
+            terrainPoints = [];
+            ceilingPoints = [];
+            platforms = [];
+            let pointsCount = 45;
+            let step = canvas.width / (pointsCount - 1);
+
+            if (envType === "surface") {
+                let currentY = canvas.height - 100;
+                for (let i = 0; i < pointsCount; i++) {
+                    currentY += (Math.random() - 0.5) * 40;
+                    currentY = Math.max(canvas.height - 200, Math.min(canvas.height - 20, currentY));
+                    terrainPoints.push({ x: i * step, y: currentY });
+                }
+            } 
+            else if (envType === "canyon") {
+                let centerIndex = pointsCount / 2;
+                for (let i = 0; i < pointsCount; i++) {
+                    let distFromCenter = Math.abs(i - centerIndex);
+                    let normalizedDist = distFromCenter / centerIndex;
+                    
+                    let baseY = (canvas.height - 50) - (normalizedDist * 350); 
+                    let noise = (Math.random() - 0.5) * 50; 
+                    
+                    let py = Math.max(50, Math.min(canvas.height - 20, baseY + noise));
+                    terrainPoints.push({ x: i * step, y: py });
+                }
+            } 
+            else if (envType === "tunnel") {
+                let tunnelHalfHeight = 70;       
+                let amplitude = 90;       
+                let frequency = 0.18;      
+                let randomOffset = Math.random() * 100;
+
+                for (let i = 0; i < pointsCount; i++) {
+                    let basePathY = (canvas.height / 2) + Math.sin(i * frequency + randomOffset) * amplitude;
+                    
+                    let floorY = basePathY + tunnelHalfHeight + (Math.random() - 0.5) * 10;
+                    let ceilY = basePathY - tunnelHalfHeight + (Math.random() - 0.5) * 10;
+                    
+                    floorY = Math.max(180, Math.min(canvas.height - 15, floorY));
+                    ceilY = Math.max(15, Math.min(canvas.height - 180, ceilY));
+                    
+                    terrainPoints.push({ x: i * step, y: floorY });
+                    ceilingPoints.push({ x: i * step, y: ceilY });
+                }
+            }
+
+            let p1Index = Math.floor(Math.random() * (pointsCount - 16)) + 8;
+            platforms.push({ x: p1Index * step, width: 55, y: terrainPoints[p1Index].y });
+
+            if (gameMode === '2p2p') {
+                let p2Index;
+                do {
+                    p2Index = Math.floor(Math.random() * (pointsCount - 16)) + 8;
+                } while (Math.abs(p2Index - p1Index) < 6); 
+                platforms.push({ x: p2Index * step, width: 55, y: terrainPoints[p2Index].y });
+            }
+
+            for (let plat of platforms) {
+                for (let p of terrainPoints) {
+                    if (p.x >= plat.x - 15 && p.x <= plat.x + plat.width + 15) {
+                        p.y = plat.y;
+                    }
+                }
+                if (envType === "tunnel") {
+                    for (let p of ceilingPoints) {
+                        if (p.x >= plat.x - 15 && p.x <= plat.x + plat.width + 15) {
+                            p.y = Math.min(p.y, plat.y - 135); 
+                        }
+                    }
+                }
+            }
+        }
+
+        function resetGame() {
+            for (let k in activeKeys) activeKeys[k] = false; 
+
+            generateTerrain();
+            
+            let startX = canvas.width / 2;
+            let startY = 80;
+            
+            if (envType === "tunnel") {
+                let index = Math.floor(ceilingPoints.length / 2);
+                startY = ceilingPoints[index].y + 40; 
+            }
+
+            landers = [];
+            
+            if (gameMode === '1p') {
+                landers.push(new Lander(1, "PLAYER 1", "#33aaff", startX, startY, {
+                    left: ['a', 'arrowleft'],
+                    up: ['s', 'arrowdown'],
+                    right: ['d', 'arrowright']
+                }));
+            } else {
+                landers.push(new Lander(1, "PLAYER 1", "#33aaff", startX - 35, startY, {
+                    left: ['a'], up: ['s'], right: ['d']
+                }));
+                landers.push(new Lander(2, "PLAYER 2", "#ff33aa", startX + 35, startY, {
+                    left: ['arrowleft'], up: ['arrowdown'], right: ['arrowright']
+                }));
+            }
+
+            globalGameState = "playing";
+            winnerText = "";
+        }
+
+        function updateGameState() {
+            if (globalGameState !== "playing") return;
+
+            let activeCount = 0;
+            for (let l of landers) {
+                if (l.state === "landed") {
+                    globalGameState = "win";
+                    winnerText = (gameMode === '1p') ? "SUCCESSFUL LANDING!" : `${l.name} WINS!`;
+                    return;
+                }
+                if (l.state === "playing") activeCount++;
+            }
+
+            if (activeCount === 0) {
+                globalGameState = "all_crashed";
+            }
+        }
+
+        function drawTerrain() {
+            ctx.strokeStyle = "#777777";
+            ctx.fillStyle = "#1e1e1e";
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height);
+            for (let p of terrainPoints) ctx.lineTo(p.x, p.y);
+            ctx.lineTo(canvas.width, canvas.height);
+            ctx.closePath();
+            ctx.fill(); ctx.stroke();
+
+            if (envType === "tunnel") {
+                ctx.fillStyle = "#161616";
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                for (let p of ceilingPoints) ctx.lineTo(p.x, p.y); 
+                ctx.lineTo(canvas.width, 0);
+                ctx.closePath();
+                ctx.fill(); ctx.stroke();
+            }
+
+            for (let plat of platforms) {
+                ctx.fillStyle = "#00ff00";
+                ctx.fillRect(plat.x, plat.y, plat.width, 6);
+                ctx.shadowBlur = 10; ctx.shadowColor = "#00ff00";
+                ctx.fillRect(plat.x, plat.y, plat.width, 2);
+                ctx.shadowBlur = 0; 
+            }
+        }
+
+        function drawHUD() {
+            ctx.font = "13px 'Courier New'";
+
+            let p1 = landers[0];
+            if (p1) {
+                ctx.fillStyle = p1.color;
+                ctx.fillText(`P1 FUEL: ${Math.max(0, Math.floor(p1.fuel))}`, 15, 25);
+                ctx.fillStyle = "#fff";
+                ctx.fillText(`H: ${p1.vx.toFixed(2)}`, 15, 45);
+                ctx.fillStyle = (p1.vy > SAFE_LANDING_SPEED_Y) ? "#ff3333" : "#fff";
+                ctx.fillText(`V: ${p1.vy.toFixed(2)}`, 15, 65);
+            }
+
+            if (gameMode !== '1p' && landers.length > 1) {
+                let p2 = landers[1];
+                ctx.textAlign = "right";
+                ctx.fillStyle = p2.color;
+                ctx.fillText(`P2 FUEL: ${Math.max(0, Math.floor(p2.fuel))}`, canvas.width - 15, 25);
+                ctx.fillStyle = "#fff";
+                ctx.fillText(`H: ${p2.vx.toFixed(2)}`, canvas.width - 15, 45);
+                ctx.fillStyle = (p2.vy > SAFE_LANDING_SPEED_Y) ? "#ff3333" : "#fff";
+                ctx.fillText(`V: ${p2.vy.toFixed(2)}`, canvas.width - 15, 65);
+                ctx.textAlign = "left"; 
+            } else {
+                ctx.textAlign = "right";
+                ctx.fillStyle = "#aaa";
+                ctx.fillText(`ENV: ${envType.toUpperCase()}`, canvas.width - 15, 25);
+                ctx.textAlign = "left";
+            }
+
+            if (globalGameState === "win") {
+                ctx.fillStyle = "#00ff00"; ctx.font = "30px 'Courier New'"; ctx.textAlign = "center";
+                ctx.fillText(winnerText, canvas.width / 2, canvas.height / 2 - 20);
+                ctx.font = "16px 'Courier New'";
+                ctx.fillText("Press [SPACEBAR] to advance to the next round.", canvas.width / 2, canvas.height / 2 + 20);
+                ctx.textAlign = "left";
+            } else if (globalGameState === "all_crashed") {
+                ctx.fillStyle = "#ff3333"; ctx.font = "30px 'Courier New'"; ctx.textAlign = "center";
+                let t = gameMode === '1p' ? "CRASHED!" : "ALL DESTROYED!";
+                ctx.fillText(t, canvas.width / 2, canvas.height / 2 - 20);
+                ctx.font = "16px 'Courier New'";
+                ctx.fillText("Press [SPACEBAR] to restart.", canvas.width / 2, canvas.height / 2 + 20);
+                ctx.textAlign = "left";
+            }
+        }
+
+        function gameLoop() {
+            if (globalGameState !== "menu") {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                for (let l of landers) l.update();
+                updateGameState();
+                drawTerrain();
+                for (let l of landers) l.draw();
+                drawHUD();
+            }
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
+</body>
+</html>
