@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Racing Game - 5 Lap Race</title>
+    <style>
+        body {
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            color: white;
+            font-family: sans-serif;
+        }
+        canvas {
+            background-color: #388E3C;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            border: 2px solid #fff;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const keys = {
+        ArrowUp: false,
+        ArrowDown: false,
+        ArrowLeft: false,
+        ArrowRight: false
+    };
+
+    window.addEventListener("keydown", (e) => {
+        if (keys.hasOwnProperty(e.key)) {
+            keys[e.key] = true;
+            e.preventDefault();
+        }
+    });
+
+    window.addEventListener("keyup", (e) => {
+        if (keys.hasOwnProperty(e.key)) {
+            keys[e.key] = false;
+        }
+    });
+
+    const waypoints = [
+        {x: 100, y: 100}, {x: 300, y: 100}, {x: 400, y: 150}, {x: 500, y: 100}, 
+        {x: 650, y: 150}, {x: 700, y: 300}, {x: 600, y: 400}, {x: 450, y: 350}, 
+        {x: 300, y: 450}, {x: 150, y: 400}, {x: 100, y: 300}, {x: 150, y: 200}
+    ];
+
+    const trackPath = new Path2D();
+    trackPath.moveTo(waypoints[0].x, waypoints[0].y);
+    for (let i = 1; i < waypoints.length; i++) {
+        trackPath.lineTo(waypoints[i].x, waypoints[i].y);
+    }
+    trackPath.closePath();
+
+    class Car {
+        constructor(x, y, color, isPlayer) {
+            this.x = x;
+            this.y = y;
+            this.color = color;
+            this.isPlayer = isPlayer;
+            this.angle = 0;
+            this.speed = 0;
+            this.maxSpeed = isPlayer ? 6 : 4.5 + Math.random() * 1.5; 
+            this.accel = 0.2;
+            this.friction = 0.96;
+            this.turnSpeed = 0.07;
+            this.width = 24;
+            this.height = 12;
+            this.waypointIndex = 0;
+            this.laps = 0;
+            this.finished = false;
+            this.finishOrder = 0;
+        }
+
+        update() {
+            if (this.finished) return;
+
+            if (this.isPlayer) {
+                if (keys.ArrowUp) this.speed += this.accel;
+                if (keys.ArrowDown) this.speed -= this.accel;
+                
+                if (Math.abs(this.speed) > 0.5) {
+                    const direction = this.speed > 0 ? 1 : -1;
+                    if (keys.ArrowLeft) this.angle -= this.turnSpeed * direction;
+                    if (keys.ArrowRight) this.angle += this.turnSpeed * direction;
+                }
+            } else {
+                let target = waypoints[this.waypointIndex];
+                let dx = target.x - this.x;
+                let dy = target.y - this.y;
+                let targetAngle = Math.atan2(dy, dx);
+                
+                let diff = targetAngle - this.angle;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+
+                if (diff > 0.05) this.angle += this.turnSpeed;
+                else if (diff < -0.05) this.angle -= this.turnSpeed;
+
+                if (this.speed < this.maxSpeed) {
+                    this.speed += this.accel;
+                }
+
+                let dist = Math.hypot(dx, dy);
+                if (dist < 90) {
+                    let nextIndex = (this.waypointIndex + 1) % waypoints.length;
+                    if (nextIndex === 0) {
+                        this.laps++;
+                        if (this.laps >= 5) {
+                            this.finished = true;
+                            finishLine.push(this);
+                            this.finishOrder = finishLine.length;
+                        }
+                    }
+                    this.waypointIndex = nextIndex;
+                }
+            }
+
+            this.speed *= this.friction;
+
+            if (this.speed > this.maxSpeed) this.speed = this.maxSpeed;
+            if (this.speed < -this.maxSpeed / 2) this.speed = -this.maxSpeed / 2;
+
+            ctx.lineWidth = 110;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            if (!ctx.isPointInStroke(trackPath, this.x, this.y)) {
+                this.speed *= 0.85; 
+            }
+
+            this.x += Math.cos(this.angle) * this.speed;
+            this.y += Math.sin(this.angle) * this.speed;
+        }
+
+        draw() {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.angle);
+            
+            ctx.fillStyle = this.color;
+            ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+            
+            ctx.fillStyle = '#111';
+            ctx.fillRect(this.width / 4, -this.height / 2.2, 4, this.height * 0.9);
+            
+            ctx.restore();
+        }
+    }
+
+    const finishLine = [];
+    const cars = [
+        new Car(100, 100, 'white', true),
+        new Car(80, 100, 'red', false),
+        new Car(60, 100, 'blue', false),
+        new Car(40, 100, 'green', false),
+        new Car(20, 100, 'yellow', false)
+    ];
+
+    function drawTrack() {
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        
+        ctx.strokeStyle = '#555'; 
+        ctx.lineWidth = 110;
+        ctx.stroke(trackPath);
+
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([20, 20]);
+        ctx.stroke(trackPath);
+        ctx.setLineDash([]);
+        
+        ctx.beginPath();
+        ctx.moveTo(100, 45);
+        ctx.lineTo(100, 155);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+    }
+
+    function drawRankings() {
+        if (finishLine.length === 0) return;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(200, 150, 400, 300);
+        ctx.fillStyle = 'white';
+        ctx.font = '24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Race Results', 400, 200);
+        
+        finishLine.forEach((car, index) => {
+            ctx.fillText(`${index + 1}. ${car.color.charAt(0).toUpperCase() + car.color.slice(1)}`, 400, 240 + (index * 40));
+        });
+    }
+
+    function gameLoop() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        drawTrack();
+
+        cars.forEach(car => {
+            car.update();
+            if (!car.finished) car.draw();
+        });
+
+        drawRankings();
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+</script>
+
+</body>
+</html>
