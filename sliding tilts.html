@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -7,6 +6,7 @@
 <style>
   body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f0f2f5; }
   h1 { margin-bottom: 10px; }
+  #stats { font-size: 18px; font-weight: bold; margin-bottom: 15px; color: #333; }
   #board { display: grid; grid-template-columns: repeat(3, 80px); grid-template-rows: repeat(3, 80px); gap: 6px; background: #333; padding: 6px; border-radius: 8px; margin-bottom: 20px; }
   .tile { width: 80px; height: 80px; background: #007bff; color: white; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: bold; border-radius: 4px; cursor: pointer; user-select: none; transition: background 0.2s; }
   .tile:hover { background: #0056b3; }
@@ -19,6 +19,7 @@
 <body>
 <h1>Sliding Puzzle</h1>
 <div class="instructions">Click any tile adjacent to the empty space to slide it. Arrange the numbers in order from 1 to 8.</div>
+<div id="stats">Time: 0s | Moves: 0</div>
 <div id="board"></div>
 <button onclick="resetGame()">Restart</button>
 
@@ -30,6 +31,12 @@
   ];
 
   const boardEl = document.getElementById("board");
+  const statsEl = document.getElementById("stats");
+
+  let moves = 0;
+  let seconds = 0;
+  let timerInterval = null;
+  let gameActive = false;
 
   function render() {
     boardEl.innerHTML = "";
@@ -47,6 +54,24 @@
     }
   }
 
+  function updateStats() {
+    statsEl.textContent = `Time: ${seconds}s | Moves: ${moves}`;
+  }
+
+  function startTimer() {
+    if (!timerInterval) {
+      timerInterval = setInterval(() => {
+        seconds++;
+        updateStats();
+      }, 1000);
+    }
+  }
+
+  function stopTimer() {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+
   function getEmptyPos() {
     for (let r = 0; r < 3; r++) {
       for (let c = 0; c < 3; c++) {
@@ -56,11 +81,20 @@
   }
 
   function moveTile(r, c) {
+    if (!gameActive) return; 
+
     const empty = getEmptyPos();
     const isAdjacent = (Math.abs(r - empty.r) + Math.abs(c - empty.c)) === 1;
+    
     if (isAdjacent) {
+      if (moves === 0 && !timerInterval) {
+        startTimer();
+      }
+      
       board[empty.r][empty.c] = board[r][c];
       board[r][c] = 0;
+      moves++;
+      updateStats();
       render();
       checkWin();
     }
@@ -82,7 +116,9 @@
       }
     }
     if (won) {
-      setTimeout(() => alert("Congratulations! You solved the puzzle."), 100);
+      gameActive = false;
+      stopTimer();
+      setTimeout(() => alert(`Congratulations! You solved the puzzle in ${seconds} seconds with ${moves} moves.`), 100);
     }
   }
 
@@ -120,6 +156,11 @@
       [4, 5, 6],
       [7, 8, 0]
     ];
+    stopTimer();
+    moves = 0;
+    seconds = 0;
+    gameActive = true;
+    updateStats();
     shuffle();
     render();
   }
@@ -128,5 +169,3 @@
 </script>
 </body>
 </html>
-
-```
